@@ -1,4 +1,5 @@
 #import "SideloadIdentity.h"
+#import <UIKit/UIKit.h>
 #import "../Shared/GSPhotosCompatibility.h"
 #import <objc/message.h>
 #include <stdatomic.h>
@@ -8,6 +9,111 @@ static NSString *GSInstalledBundleID;
 static id (*GSOriginalApplicationIdentifier)(id,SEL);
 static id (*GSOriginalSSOBundleID)(id,SEL);
 static atomic_bool GSApplicationIdentityUsed,GSBundleIdentityUsed;
+static atomic_bool GSOAuthCallbackReceived;
+static atomic_uint GSOAuthCallbackCount;
+static NSString *GSOAuthCallbackChannel = @"none";
+
+static void GSOAuthRecordCallback(NSString *channel) {
+    atomic_store(&GSOAuthCallbackReceived, true);
+    atomic_fetch_add(&GSOAuthCallbackCount, 1);
+    GSOAuthCallbackChannel = [channel copy] ?: @"unknown";
+}
+
+static NSString *GSOAuthCallbackState(void) {
+    unsigned int count = atomic_load(&GSOAuthCallbackCount);
+    return [NSString stringWithFormat:@"callback=%@ count=%u channel=%@",
+        atomic_load(&GSOAuthCallbackReceived) ? @"1" : @"0",
+        count,
+        GSOAuthCallbackChannel ?: @"none"];
+}
+
+static BOOL (*GSOriginalApplicationOpenURL)(id,SEL,NSURL *,NSDictionary *);
+static BOOL GSApplicationOpenURL(id object,SEL selector,NSURL *url,NSDictionary *options) {
+    GSOAuthRecordCallback(@"application.openURL");
+    return GSOriginalApplicationOpenURL(object,selector,url,options);
+}
+
+static BOOL (*GSOriginalApplicationContinueUserActivity)(id,SEL,NSUserActivity *,void (^)(NSArray *));
+static BOOL GSApplicationContinueUserActivity(id object,SEL selector,NSUserActivity *activity,void (^restoration)(NSArray *)) {
+    GSOAuthRecordCallback(@"application.continueUserActivity");
+    return GSOriginalApplicationContinueUserActivity(object,selector,activity,restoration);
+}
+
+static void (*GSOriginalSceneOpenURLContexts)(id,SEL,UIScene *,NSSet *);
+static void GSSceneOpenURLContexts(id object,SEL selector,UIScene *scene,NSSet *contexts) {
+    GSOAuthRecordCallback(@"scene.openURLContexts");
+    GSOriginalSceneOpenURLContexts(object,selector,scene,contexts);
+}
+
+static BOOL GSHookInstanceMethodIfOwned(Class cls,SEL selector,IMP replacement,IMP *original,const char *abi) {
+    if(!cls)return NO;
+    Method method=class_getInstanceMethod(cls,selector);
+    if(!method||strcmp(method_getTypeEncoding(method),abi)!=0)return NO;
+    Class parent=class_getSuperclass(cls);
+    if(parent&&class_getInstanceMethod(parent,selector)==method)return NO;
+    if(*original)return YES;
+    *original=(IMP)method_getImplementation(method);
+    method_setImplementation(method,replacement);
+    return YES;
+}
+
+static void GSOAuthInstallDelegateHooks(void) {
+    UIApplication *application=UIApplication.sharedApplication;
+    id delegate=application.delegate;
+    if(delegate){
+        Class cls=object_getClass(delegate);
+        GSHookInstanceMethodIfOwned(
+            cls,
+            @selector(application:openURL:options:),
+            (IMP)GSApplicationOpenURL,
+            (IMP *)&GSOriginalApplicationOpenURL,
+            "B32@0:8@16@24");
+
+        GSHookInstanceMethodIfOwned(
+            cls,
+            @selector(application:continueUserActivity:restorationHandler:),
+            (IMP)GSApplicationContinueUserActivity,
+            (IMP *)&GSOriginalApplicationContinueUserActivity,
+            "B48@0:8@16@24@?32");
+    }
+
+    for(UIScene *scene in application.connectedScenes){
+        id sceneDelegate=scene.delegate;
+        if(!sceneDelegate)continue;
+        Class cls=object_getClass(sceneDelegate);
+        GSHookInstanceMethodIfOwned(
+            cls,
+            @selector(scene:openURLContexts:),
+            (IMP)GSSceneOpenURLContexts,
+            (IMP *)&GSOriginalSceneOpenURLContexts,
+            "v32@0:8@16@24");
+    }
+}
+
+static void GSOAuthScheduleDelegateHookRetry(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static NSInteger attempts=0;
+        if(attempts++>=40)return;
+        GSOAuthInstallDelegateHooks();
+        if(!GSOriginalApplicationOpenURL &&
+           !GSOriginalApplicationContinueUserActivity &&
+           !GSOriginalSceneOpenURLContexts){
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),
+                dispatch_get_main_queue(),
+                ^{ GSOAuthScheduleDelegateHookRetry(); });
+        }
+    });
+}
+
+NSDictionary *GSOAuthDiagnosticsSnapshot(void) {
+    return @{
+        @"callbackReceived":@(atomic_load(&GSOAuthCallbackReceived)),
+        @"callbackCount":@(atomic_load(&GSOAuthCallbackCount)),
+        @"callbackChannel":GSOAuthCallbackChannel ?: @"none"
+    };
+}
+
 
 static id GSApplicationIdentifier(id object,SEL selector){
  id value=GSOriginalApplicationIdentifier(object,selector);
@@ -54,5 +160,6 @@ NSDictionary *GSSideloadIdentitySnapshot(void){
  return @{@"configurationHook":@(GSOriginalApplicationIdentifier!=NULL),
   @"bundleServiceHook":@(GSOriginalSSOBundleID!=NULL),
   @"configurationUsed":@(atomic_load(&GSApplicationIdentityUsed)),
-  @"bundleServiceUsed":@(atomic_load(&GSBundleIdentityUsed))};
+  @"bundleServiceUsed":@(atomic_load(&GSBundleIdentityUsed)),
+  @"oauth":GSOAuthDiagnosticsSnapshot()};
 }

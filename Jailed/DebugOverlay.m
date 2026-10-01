@@ -19,6 +19,9 @@ static void GSUpdate(void) {
         NSString *nativeState = GSNativeAccountDebugState() ?: @"?";
 
         NSDictionary *identity = GSSideloadIdentitySnapshot();
+        NSDictionary *oauth = identity[@"oauth"];
+        NSString *oauthState = [NSString stringWithFormat:@"callback=%@ count=%@ channel=%@",
+            oauth[@"callbackReceived"], oauth[@"callbackCount"], oauth[@"callbackChannel"]];
 
         NSString *text = [NSString stringWithFormat:
             @"GUNSHOT DEBUG\\n"
@@ -29,6 +32,7 @@ static void GSUpdate(void) {
              "identityUsed = cfg=%@ svc=%@\\n"
              "connection = %@\n"
              "native = %@"
+             "oauth = %@"
              "status = %@",
             bundle,
             exec,
@@ -39,6 +43,7 @@ static void GSUpdate(void) {
             identity[@"bundleServiceUsed"],
             connectionState,
             nativeState,
+            oauthState,
             GSStatus ?: @"-"];
 
         GSLabel.text = text;

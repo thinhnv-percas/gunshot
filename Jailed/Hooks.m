@@ -28,6 +28,7 @@ static void GSLoadJailed(void) {
         });
 
         GSInstallSideloadIdentity();
+        // OAuth callback diagnostics are scheduled by the identity installer.
 
         dispatch_async(dispatch_get_main_queue(), ^{
             NSDictionary *identity = GSSideloadIdentitySnapshot();
