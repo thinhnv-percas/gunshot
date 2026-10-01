@@ -1,4 +1,4 @@
-#import "DebugOverlay.h"
+﻿#import "DebugOverlay.h"
 #import <UIKit/UIKit.h>
 #import "SideloadIdentity.h"
 
@@ -65,7 +65,7 @@ void GSDebugInstallOverlay(void) {
         }
 
         if (!window) {
-            window = UIApplication.sharedApplication.keyWindow;
+            // Deprecated since iOS 13: intentionally removed.
         }
 
         if (!window) return;
@@ -94,3 +94,4 @@ void GSDebugInstallOverlay(void) {
         GSUpdate();
     });
 }
+
