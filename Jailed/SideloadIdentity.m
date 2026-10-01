@@ -28,7 +28,7 @@ static void GSOAuthRecordCallback(NSString *channel) {
     }
 }
 
-static BOOL (*GSOriginalApplicationOpenURL(id,SEL,NSURL *,NSDictionary *);
+static BOOL (*GSOriginalApplicationOpenURL)(id,SEL,NSURL *,NSDictionary *);
 static BOOL GSApplicationOpenURL(id object,SEL selector,NSURL *url,NSDictionary *options) {
     GSOAuthRecordCallback(@"application.openURL");
     return GSOriginalApplicationOpenURL(object,selector,url,options);
@@ -176,4 +176,5 @@ NSDictionary *GSSideloadIdentitySnapshot(void){
   @"bundleServiceUsed":@(atomic_load(&GSBundleIdentityUsed)),
   @"oauth":GSOAuthDiagnosticsSnapshot()};
 }
+
 
