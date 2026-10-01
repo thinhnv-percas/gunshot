@@ -1,4 +1,4 @@
-﻿#import "DebugOverlay.h"
+#import "DebugOverlay.h"
 #import <UIKit/UIKit.h>
 #import "SideloadIdentity.h"
 #import "../UI/GSAccountConnection.h"
@@ -25,7 +25,8 @@ static void GSUpdate(void) {
              "version = %@\\n"
              "identityHook = cfg=%@ svc=%@\\n"
              "identityUsed = cfg=%@ svc=%@\\n"
-             "connection = %@\n"$([Environment]::NewLine)              "status = %@",
+             "connection = %@\n"
+             "status = %@",
             bundle,
             exec,
             version,
