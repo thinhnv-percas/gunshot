@@ -1,6 +1,7 @@
 ﻿#import "DebugOverlay.h"
 #import <UIKit/UIKit.h>
 #import "SideloadIdentity.h"
+#import "../UI/GSAccountConnection.h"
 
 static UILabel *GSLabel;
 static NSString *GSStatus = @"loading";
@@ -12,6 +13,8 @@ static void GSUpdate(void) {
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"?";
         NSString *exec = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleExecutable"] ?: @"?";
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+        NSDictionary *connection = GSAccountConnectionSnapshot();
+        NSString *connectionState = connection[@"state"] ?: @"?";
 
         NSDictionary *identity = GSSideloadIdentitySnapshot();
 
@@ -22,7 +25,7 @@ static void GSUpdate(void) {
              "version = %@\\n"
              "identityHook = cfg=%@ svc=%@\\n"
              "identityUsed = cfg=%@ svc=%@\\n"
-             "status = %@",
+             "connection = %@\n"$([Environment]::NewLine)              "status = %@",
             bundle,
             exec,
             version,
@@ -30,6 +33,7 @@ static void GSUpdate(void) {
             identity[@"bundleServiceHook"],
             identity[@"configurationUsed"],
             identity[@"bundleServiceUsed"],
+            connectionState,
             GSStatus ?: @"-"];
 
         GSLabel.text = text;
@@ -94,4 +98,5 @@ void GSDebugInstallOverlay(void) {
         GSUpdate();
     });
 }
+
 

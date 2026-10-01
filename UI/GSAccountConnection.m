@@ -1,5 +1,8 @@
-#import "GSAccountConnection.h"
+﻿#import "GSAccountConnection.h"
 #import "GSNativeAccount.h"
+#if GS_JAILED
+#import "../Jailed/DebugOverlay.h"
+#endif
 #import "../Shared/IPCProtocol.h"
 #if !GS_JAILED
 #import "GSNativeRelay.h"
@@ -28,6 +31,9 @@ static void GSConnectAvailableAccount(BOOL foreground) {
  // Failed attempts are bounded; repeated foreground notifications are coalesced.
  if(!changed&&((!foreground&&GSConnected)||now-GSLastAttempt<(foreground?5:60)))return;
  GSConnectionID=identifier;GSLastAttempt=now;GSConnecting=YES;GSConnected=NO;GSConnectionRecord(@"connecting");
+#if GS_JAILED
+ GSDebugSetStatus(@"native account connection: connecting");
+#endif
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{@autoreleasepool{
   NSError *error=nil;BOOL success=NO;
 #if GS_JAILED
@@ -40,7 +46,21 @@ static void GSConnectAvailableAccount(BOOL foreground) {
    if(![GSNativeAccountSummary()[@"identifier"]isEqual:identifier]){
     GSConnectionID=nil;GSConnected=NO;GSConnectionRecord(@"waiting_for_account");return;
    }
-   GSConnected=success;GSConnectionRecord(success?@"connected":@"failed");
+   GSConnected=success;
+if (success) {
+ GSConnectionRecord(@"connected");
+#if GS_JAILED
+ GSDebugSetStatus(@"native account connection: SUCCESS");
+#endif
+} else {
+ NSString *domain=error.domain ?: @"unknown";
+ NSInteger code=error.code;
+ NSString *trace=[NSString stringWithFormat:@"native account connection: FAILED %@/%ld",domain,(long)code];
+ GSConnectionRecord(trace);
+#if GS_JAILED
+ GSDebugSetStatus(trace);
+#endif
+}
   });
  }});
 }
@@ -53,3 +73,4 @@ void GSStartAccountConnection(void) {
  GSConnectAvailableAccount(NO);
 }
 void GSResumeAccountConnection(void){GSConnectAvailableAccount(YES);}
+
