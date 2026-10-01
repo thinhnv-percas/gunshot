@@ -1,0 +1,8 @@
+# Apply this one-line change to Jailed/Makefile:
+# Add DebugOverlay.m to GunshotJailed_FILES.
+#
+# Original:
+# GunshotJailed_FILES = Hooks.m EmbeddedService.m SideloadKeychain.m SideloadIdentity.m $(addprefix ../UI/,$(filter-out GSNativeRelay.m,$(GUNSHOT_UI_FILES)))
+#
+# Debug:
+GunshotJailed_FILES = Hooks.m EmbeddedService.m SideloadKeychain.m SideloadIdentity.m DebugOverlay.m $(addprefix ../UI/,$(filter-out GSNativeRelay.m,$(GUNSHOT_UI_FILES)))
