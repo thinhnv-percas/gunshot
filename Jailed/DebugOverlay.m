@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import "SideloadIdentity.h"
 #import "../UI/GSAccountConnection.h"
+#import "../UI/GSNativeAccount.h"
 
 static UILabel *GSLabel;
 static NSString *GSStatus = @"loading";
@@ -15,6 +16,7 @@ static void GSUpdate(void) {
         NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
         NSDictionary *connection = GSAccountConnectionSnapshot();
         NSString *connectionState = connection[@"state"] ?: @"?";
+        NSString *nativeState = GSNativeAccountDebugState() ?: @"?";
 
         NSDictionary *identity = GSSideloadIdentitySnapshot();
 
@@ -26,6 +28,7 @@ static void GSUpdate(void) {
              "identityHook = cfg=%@ svc=%@\\n"
              "identityUsed = cfg=%@ svc=%@\\n"
              "connection = %@\n"
+             "native = %@"
              "status = %@",
             bundle,
             exec,
@@ -35,6 +38,7 @@ static void GSUpdate(void) {
             identity[@"configurationUsed"],
             identity[@"bundleServiceUsed"],
             connectionState,
+            nativeState,
             GSStatus ?: @"-"];
 
         GSLabel.text = text;

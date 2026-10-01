@@ -3,6 +3,8 @@
 FOUNDATION_EXPORT void GSInstallNativeAccount(void);
 // Metadata only. Call on main; no token is returned to UI or persisted.
 FOUNDATION_EXPORT NSDictionary *GSNativeAccountSummary(void);
+// Jailed debug metadata only; no OAuth credentials.
+FOUNDATION_EXPORT NSString *GSNativeAccountDebugState(void);
 // Worker-thread C ABI: caller owns the malloc-allocated result. NULL on failure.
 FOUNDATION_EXPORT char *GSNativeBearer(const char *identifier);
 // Main thread; compare an opaque native accountID (e.g. GIPGaiaAccountID).

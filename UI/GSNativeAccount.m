@@ -11,6 +11,22 @@
 @implementation GSAccountSource
 @end
 static GSAccountSource *GSSource;
+#if GS_JAILED
+static NSString *GSDebugNativeAccountState =
+    @"manager=unset viewing=unset identity=unset auth=unset user=unset";
+
+static void GSDebugNativeAccountRecord(NSString *state) {
+    GSDebugNativeAccountState = [state copy];
+}
+
+NSString *GSNativeAccountDebugState(void) {
+    return GSDebugNativeAccountState ?: @"unknown";
+}
+#else
+NSString *GSNativeAccountDebugState(void) {
+    return @"unavailable";
+}
+#endif
 static id (*GSViewingAccountOriginal)(id,SEL);
 static id GSViewingAccount(id object,SEL selector){GSSource.manager=object;return GSViewingAccountOriginal(object,selector);}
 static BOOL GSMethod(id object,NSString *name,const char *encoding){
@@ -30,10 +46,91 @@ static id GSIdentity(id account){
  return identity;
 }
 NSDictionary *GSNativeAccountSummary(void){
- if(!NSThread.isMainThread)return nil;
- id account=GSGet(GSSource.manager,@"viewingAccount");id identity=GSIdentity(account);
- NSString *email=GSGet(identity,@"userEmail"),*identifier=GSGet(identity,@"userID");
- if(![email isKindOfClass:NSString.class]||!email.length||![identifier isKindOfClass:NSString.class]||!identifier.length)return nil;
+ if(!NSThread.isMainThread){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=off-main viewing=- identity=- auth=- user=-");
+#endif
+  return nil;
+ }
+
+ id manager=GSSource.manager;
+ if(!manager){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=nil viewing=- identity=- auth=- user=-");
+#endif
+  return nil;
+ }
+
+ id account=GSGet(manager,@"viewingAccount");
+ if(!account){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=ok viewing=nil identity=- auth=- user=-");
+#endif
+  return nil;
+ }
+
+ Class accountClass=NSClassFromString(@"PHSAccount");
+ if(![account isKindOfClass:accountClass]){
+#if GS_JAILED
+  GSDebugNativeAccountRecord([NSString stringWithFormat:
+    @"manager=ok viewing=ok class=%@ identity=- auth=- user=-",
+    NSStringFromClass([account class]) ?: @"unknown"]);
+#endif
+  return nil;
+ }
+
+ Ivar ivar=class_getInstanceVariable(accountClass,"_ssoIdentity");
+ if(!ivar||strcmp(ivar_getTypeEncoding(ivar),"@\"<SSOIdentity>\"")){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=ok viewing=ok identity=missing auth=- user=-");
+#endif
+  return nil;
+ }
+
+ id identity=object_getIvar(account,ivar);
+ if(!identity){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=ok viewing=ok identity=nil auth=- user=-");
+#endif
+  return nil;
+ }
+
+ if(!GSMethod(identity,@"hasValidAuth","B16@0:8")){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=ok viewing=ok identity=ok auth=method-missing user=-");
+#endif
+  return nil;
+ }
+
+ BOOL validAuth=((BOOL(*)(id,SEL))objc_msgSend)(
+    identity,NSSelectorFromString(@"hasValidAuth"));
+
+ if(!validAuth){
+#if GS_JAILED
+  GSDebugNativeAccountRecord(@"manager=ok viewing=ok identity=ok auth=invalid user=-");
+#endif
+  return nil;
+ }
+
+ NSString *email=GSGet(identity,@"userEmail");
+ NSString *identifier=GSGet(identity,@"userID");
+ BOOL validEmail=[email isKindOfClass:NSString.class]&&email.length>0;
+ BOOL validID=[identifier isKindOfClass:NSString.class]&&identifier.length>0;
+
+#if GS_JAILED
+ if(!validEmail||!validID){
+  GSDebugNativeAccountRecord([NSString stringWithFormat:
+    @"manager=ok viewing=ok identity=ok auth=valid user=email:%@ id:%@",
+    validEmail?@"ok":@"missing",
+    validID?@"ok":@"missing"]);
+  return nil;
+ }
+
+ GSDebugNativeAccountRecord(
+    @"manager=ok viewing=ok identity=ok auth=valid user=valid");
+#endif
+
+ if(!validEmail||!validID)return nil;
  return @{@"email":email,@"identifier":identifier};
 }
 BOOL GSNativeAccountMatches(id accountID){
