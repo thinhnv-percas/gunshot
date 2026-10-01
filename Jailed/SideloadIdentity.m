@@ -1,4 +1,4 @@
-#import "SideloadIdentity.h"
+﻿#import "SideloadIdentity.h"
 #import <UIKit/UIKit.h>
 #import "../Shared/GSPhotosCompatibility.h"
 #import <objc/message.h>
@@ -12,22 +12,23 @@ static atomic_bool GSApplicationIdentityUsed,GSBundleIdentityUsed;
 static atomic_bool GSOAuthCallbackReceived;
 static atomic_uint GSOAuthCallbackCount;
 static NSString *GSOAuthCallbackChannel = @"none";
+static NSObject *GSOAuthDiagnosticsLock;
 
 static void GSOAuthRecordCallback(NSString *channel) {
     atomic_store(&GSOAuthCallbackReceived, true);
     atomic_fetch_add(&GSOAuthCallbackCount, 1);
-    GSOAuthCallbackChannel = [channel copy] ?: @"unknown";
+
+    NSObject *lock = GSOAuthDiagnosticsLock;
+    if (lock) {
+        @synchronized(lock) {
+            GSOAuthCallbackChannel = [channel copy] ?: @"unknown";
+        }
+    } else {
+        GSOAuthCallbackChannel = [channel copy] ?: @"unknown";
+    }
 }
 
-static NSString *GSOAuthCallbackState(void) {
-    unsigned int count = atomic_load(&GSOAuthCallbackCount);
-    return [NSString stringWithFormat:@"callback=%@ count=%u channel=%@",
-        atomic_load(&GSOAuthCallbackReceived) ? @"1" : @"0",
-        count,
-        GSOAuthCallbackChannel ?: @"none"];
-}
-
-static BOOL (*GSOriginalApplicationOpenURL)(id,SEL,NSURL *,NSDictionary *);
+static BOOL (*GSOriginalApplicationOpenURL(id,SEL,NSURL *,NSDictionary *);
 static BOOL GSApplicationOpenURL(id object,SEL selector,NSURL *url,NSDictionary *options) {
     GSOAuthRecordCallback(@"application.openURL");
     return GSOriginalApplicationOpenURL(object,selector,url,options);
@@ -107,10 +108,21 @@ static void GSOAuthScheduleDelegateHookRetry(void) {
 }
 
 NSDictionary *GSOAuthDiagnosticsSnapshot(void) {
+    NSString *channel = @"none";
+    NSObject *lock = GSOAuthDiagnosticsLock;
+
+    if (lock) {
+        @synchronized(lock) {
+            channel = [GSOAuthCallbackChannel copy] ?: @"none";
+        }
+    } else {
+        channel = [GSOAuthCallbackChannel copy] ?: @"none";
+    }
+
     return @{
         @"callbackReceived":@(atomic_load(&GSOAuthCallbackReceived)),
         @"callbackCount":@(atomic_load(&GSOAuthCallbackCount)),
-        @"callbackChannel":GSOAuthCallbackChannel ?: @"none"
+        @"callbackChannel":channel
     };
 }
 
@@ -131,6 +143,7 @@ static id GSSSOBundleID(id object,SEL selector){
  return @"com.google.photos";
 }
 void GSInstallSideloadIdentity(void){
+ if(!GSOAuthDiagnosticsLock)GSOAuthDiagnosticsLock=[NSObject new];
  const char *liveContainer=getenv("LC_HOME_PATH");
  if((liveContainer&&*liveContainer)||!GSPhotosHostSupported())return;
  id identifier=NSBundle.mainBundle.bundleIdentifier;
@@ -163,3 +176,4 @@ NSDictionary *GSSideloadIdentitySnapshot(void){
   @"bundleServiceUsed":@(atomic_load(&GSBundleIdentityUsed)),
   @"oauth":GSOAuthDiagnosticsSnapshot()};
 }
+
