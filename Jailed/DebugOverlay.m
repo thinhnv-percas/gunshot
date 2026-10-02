@@ -5,9 +5,21 @@
 #import "../UI/GSAccountConnection.h"
 #import "../UI/GSNativeAccount.h"
 
+typedef struct __SecTask *SecTaskRef;
+
+extern SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+
+extern CFTypeRef SecTaskCopyValueForEntitlement(
+    SecTaskRef task,
+    CFStringRef entitlement,
+    CFErrorRef *error
+);
+
 static NSString *GSRuntimeEntitlementString(NSString *name) {
     SecTaskRef task = SecTaskCreateFromSelf(NULL);
-    if (!task) return @"-";
+    if (!task) {
+        return @"-";
+    }
 
     CFTypeRef raw = SecTaskCopyValueForEntitlement(
         task,
@@ -21,10 +33,15 @@ static NSString *GSRuntimeEntitlementString(NSString *name) {
         id value = CFBridgingRelease(raw);
 
         if ([value isKindOfClass:NSString.class]) {
-            result = value.length ? value : @"-";
+            NSString *stringValue = (NSString *)value;
+            result = stringValue.length ? stringValue : @"-";
         } else if ([value isKindOfClass:NSArray.class]) {
-            result = [(NSArray *)value componentsJoinedByString:@","];
-            if (!result.length) result = @"-";
+            NSArray *arrayValue = (NSArray *)value;
+            result = arrayValue.count
+                ? [arrayValue componentsJoinedByString:@","]
+                : @"-";
+        } else if ([value isKindOfClass:NSNumber.class]) {
+            result = [(NSNumber *)value stringValue];
         } else {
             result = [value description] ?: @"-";
         }
@@ -33,7 +50,6 @@ static NSString *GSRuntimeEntitlementString(NSString *name) {
     CFRelease(task);
     return result;
 }
-
 static NSDictionary *GSRuntimeEntitlementSnapshot(void) {
     return @{
         @"applicationIdentifier":
@@ -92,7 +108,8 @@ NSDictionary *oauth = identity[@"oauth"];
             connectionState,
             nativeState,
             oauthState,
-            webAuthState,
+            webAuthState,
+
             runtimeIdentityState,
             GSStatus ?: @"-"];
 
