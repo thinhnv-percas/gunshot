@@ -1,4 +1,4 @@
-﻿#import "SideloadIdentity.h"
+#import "SideloadIdentity.h"
 #import <UIKit/UIKit.h>
 #import "../Shared/GSPhotosCompatibility.h"
 #import <objc/message.h>
@@ -58,6 +58,221 @@ static BOOL GSHookInstanceMethodIfOwned(Class cls,SEL selector,IMP replacement,I
     return YES;
 }
 
+static atomic_bool GSWebAuthCreated;
+static atomic_bool GSWebAuthStarted;
+static atomic_bool GSWebAuthCompleted;
+static atomic_bool GSWebAuthSucceeded;
+static atomic_bool GSWebAuthCancelled;
+
+static atomic_uint GSWebAuthCreateCount;
+static atomic_uint GSWebAuthStartCount;
+static atomic_uint GSWebAuthCompletionCount;
+static atomic_uint GSWebAuthCancelCount;
+
+static NSString *GSWebAuthLastErrorDomain = @"none";
+static NSInteger GSWebAuthLastErrorCode = 0;
+static NSObject *GSWebAuthDiagnosticsLock;
+
+static id (*GSOriginalWebAuthInitLegacy)(id,SEL,NSURL *,NSString *,void (^)(NSURL *,NSError *));
+static id (*GSOriginalWebAuthInitModern)(id,SEL,NSURL *,id,void (^)(NSURL *,NSError *));
+static BOOL (*GSOriginalWebAuthStart)(id,SEL);
+static void (*GSOriginalWebAuthCancel)(id,SEL);
+
+static void GSWebAuthRecordCompletion(NSURL *callbackURL,NSError *error) {
+    atomic_store(&GSWebAuthCompleted,true);
+    atomic_fetch_add(&GSWebAuthCompletionCount,1);
+
+    NSObject *lock=GSWebAuthDiagnosticsLock;
+
+    void (^update)(void)=^{
+        if(error){
+            GSWebAuthLastErrorDomain=error.domain.length?[error.domain copy]:@"unknown";
+            GSWebAuthLastErrorCode=error.code;
+            atomic_store(&GSWebAuthSucceeded,false);
+        }else{
+            GSWebAuthLastErrorDomain=@"none";
+            GSWebAuthLastErrorCode=0;
+            atomic_store(&GSWebAuthSucceeded,true);
+        }
+    };
+
+    if(lock){
+        @synchronized(lock){ update(); }
+    }else{
+        update();
+    }
+
+    // Diagnostics intentionally do not inspect or log callbackURL contents.
+    (void)callbackURL;
+}
+
+static id GSWebAuthInitLegacy(
+    id object,
+    SEL selector,
+    NSURL *url,
+    NSString *callbackURLScheme,
+    void (^completion)(NSURL *,NSError *)
+){
+    atomic_store(&GSWebAuthCreated,true);
+    atomic_fetch_add(&GSWebAuthCreateCount,1);
+
+    void (^wrappedCompletion)(NSURL *,NSError *)=^(NSURL *callbackURL,NSError *error){
+        GSWebAuthRecordCompletion(callbackURL,error);
+        if(completion) completion(callbackURL,error);
+    };
+
+    return GSOriginalWebAuthInitLegacy(
+        object,
+        selector,
+        url,
+        callbackURLScheme,
+        wrappedCompletion
+    );
+}
+
+static id GSWebAuthInitModern(
+    id object,
+    SEL selector,
+    NSURL *url,
+    id callback,
+    void (^completion)(NSURL *,NSError *)
+){
+    atomic_store(&GSWebAuthCreated,true);
+    atomic_fetch_add(&GSWebAuthCreateCount,1);
+
+    void (^wrappedCompletion)(NSURL *,NSError *)=^(NSURL *callbackURL,NSError *error){
+        GSWebAuthRecordCompletion(callbackURL,error);
+        if(completion) completion(callbackURL,error);
+    };
+
+    return GSOriginalWebAuthInitModern(
+        object,
+        selector,
+        url,
+        callback,
+        wrappedCompletion
+    );
+}
+
+static BOOL GSWebAuthStart(id object,SEL selector){
+    BOOL result=GSOriginalWebAuthStart(object,selector);
+
+    if(result){
+        atomic_store(&GSWebAuthStarted,true);
+        atomic_fetch_add(&GSWebAuthStartCount,1);
+    }
+
+    return result;
+}
+
+static void GSWebAuthCancel(id object,SEL selector){
+    atomic_store(&GSWebAuthCancelled,true);
+    atomic_fetch_add(&GSWebAuthCancelCount,1);
+    GSOriginalWebAuthCancel(object,selector);
+}
+
+static BOOL GSHookWebAuthMethod(
+    Class cls,
+    SEL selector,
+    IMP replacement,
+    IMP *original
+){
+    if(!cls)return NO;
+
+    Method method=class_getInstanceMethod(cls,selector);
+    if(!method)return NO;
+
+    if(*original)return YES;
+
+    *original=method_getImplementation(method);
+    method_setImplementation(method,replacement);
+    return YES;
+}
+
+static BOOL GSWebAuthInstallHooks(void){
+    Class cls=NSClassFromString(@"ASWebAuthenticationSession");
+    if(!cls)return NO;
+
+    BOOL installed=NO;
+
+    installed|=GSHookWebAuthMethod(
+        cls,
+        @selector(initWithURL:callbackURLScheme:completionHandler:),
+        (IMP)GSWebAuthInitLegacy,
+        (IMP *)&GSOriginalWebAuthInitLegacy
+    );
+
+    installed|=GSHookWebAuthMethod(
+        cls,
+        @selector(initWithURL:callback:completionHandler:),
+        (IMP)GSWebAuthInitModern,
+        (IMP *)&GSOriginalWebAuthInitModern
+    );
+
+    installed|=GSHookWebAuthMethod(
+        cls,
+        @selector(start),
+        (IMP)GSWebAuthStart,
+        (IMP *)&GSOriginalWebAuthStart
+    );
+
+    installed|=GSHookWebAuthMethod(
+        cls,
+        @selector(cancel),
+        (IMP)GSWebAuthCancel,
+        (IMP *)&GSOriginalWebAuthCancel
+    );
+
+    return installed;
+}
+
+static void GSWebAuthScheduleHookRetry(void){
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static NSInteger attempts=0;
+
+        if(GSWebAuthInstallHooks())return;
+        if(attempts++>=40)return;
+
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),
+            dispatch_get_main_queue(),
+            ^{
+                GSWebAuthScheduleHookRetry();
+            }
+        );
+    });
+}
+
+NSDictionary *GSWebAuthDiagnosticsSnapshot(void){
+    NSString *errorDomain=@"none";
+    NSInteger errorCode=0;
+
+    NSObject *lock=GSWebAuthDiagnosticsLock;
+
+    if(lock){
+        @synchronized(lock){
+            errorDomain=[GSWebAuthLastErrorDomain copy]?:@"none";
+            errorCode=GSWebAuthLastErrorCode;
+        }
+    }else{
+        errorDomain=[GSWebAuthLastErrorDomain copy]?:@"none";
+        errorCode=GSWebAuthLastErrorCode;
+    }
+
+    return @{
+        @"created":@(atomic_load(&GSWebAuthCreated)),
+        @"started":@(atomic_load(&GSWebAuthStarted)),
+        @"completed":@(atomic_load(&GSWebAuthCompleted)),
+        @"succeeded":@(atomic_load(&GSWebAuthSucceeded)),
+        @"cancelled":@(atomic_load(&GSWebAuthCancelled)),
+        @"createCount":@(atomic_load(&GSWebAuthCreateCount)),
+        @"startCount":@(atomic_load(&GSWebAuthStartCount)),
+        @"completionCount":@(atomic_load(&GSWebAuthCompletionCount)),
+        @"cancelCount":@(atomic_load(&GSWebAuthCancelCount)),
+        @"errorDomain":errorDomain,
+        @"errorCode":@(errorCode)
+    };
+}
 static void GSOAuthInstallDelegateHooks(void) {
     UIApplication *application=UIApplication.sharedApplication;
     id delegate=application.delegate;
@@ -144,6 +359,8 @@ static id GSSSOBundleID(id object,SEL selector){
 }
 void GSInstallSideloadIdentity(void){
  if(!GSOAuthDiagnosticsLock)GSOAuthDiagnosticsLock=[NSObject new];
+ if(!GSWebAuthDiagnosticsLock)GSWebAuthDiagnosticsLock=[NSObject new];
+ GSWebAuthScheduleHookRetry();
  const char *liveContainer=getenv("LC_HOME_PATH");
  if((liveContainer&&*liveContainer)||!GSPhotosHostSupported())return;
  id identifier=NSBundle.mainBundle.bundleIdentifier;

@@ -3,3 +3,4 @@
 void GSInstallSideloadIdentity(void);
 NSDictionary *GSSideloadIdentitySnapshot(void);
 FOUNDATION_EXPORT NSDictionary *GSOAuthDiagnosticsSnapshot(void);
+FOUNDATION_EXPORT NSDictionary *GSWebAuthDiagnosticsSnapshot(void);

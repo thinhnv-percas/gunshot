@@ -19,7 +19,9 @@ static void GSUpdate(void) {
         NSString *nativeState = GSNativeAccountDebugState() ?: @"?";
 
         NSDictionary *identity = GSSideloadIdentitySnapshot();
-        NSDictionary *oauth = identity[@"oauth"];
+                NSDictionary *webAuth = GSWebAuthDiagnosticsSnapshot();
+        NSString *webAuthState = [NSString stringWithFormat:@"created=%@ started=%@ completed=%@ success=%@ cancel=%@ create=%@ start=%@ completion=%@ error=%@/%@", webAuth[@"created"], webAuth[@"started"], webAuth[@"completed"], webAuth[@"succeeded"], webAuth[@"cancelled"], webAuth[@"createCount"], webAuth[@"startCount"], webAuth[@"completionCount"], webAuth[@"errorDomain"], webAuth[@"errorCode"]];
+NSDictionary *oauth = identity[@"oauth"];
         NSString *oauthState = [NSString stringWithFormat:@"callback=%@ count=%@ channel=%@",
             oauth[@"callbackReceived"], oauth[@"callbackCount"], oauth[@"callbackChannel"]];
 
@@ -32,7 +34,7 @@ static void GSUpdate(void) {
              "identityUsed = cfg=%@ svc=%@\\n"
              "connection = %@\n"
              "native = %@"
-             "oauth = %@"
+             "oauth = %@\nwebAuth = %@"
              "status = %@",
             bundle,
             exec,
@@ -44,6 +46,7 @@ static void GSUpdate(void) {
             connectionState,
             nativeState,
             oauthState,
+            webAuth,
             GSStatus ?: @"-"];
 
         GSLabel.text = text;
