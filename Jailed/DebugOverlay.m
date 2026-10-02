@@ -1,9 +1,53 @@
 #import "DebugOverlay.h"
 #import <UIKit/UIKit.h>
+#import <Security/Security.h>
 #import "SideloadIdentity.h"
 #import "../UI/GSAccountConnection.h"
 #import "../UI/GSNativeAccount.h"
 
+static NSString *GSRuntimeEntitlementString(NSString *name) {
+    SecTaskRef task = SecTaskCreateFromSelf(NULL);
+    if (!task) return @"-";
+
+    CFTypeRef raw = SecTaskCopyValueForEntitlement(
+        task,
+        (__bridge CFStringRef)name,
+        NULL
+    );
+
+    NSString *result = @"-";
+
+    if (raw) {
+        id value = CFBridgingRelease(raw);
+
+        if ([value isKindOfClass:NSString.class]) {
+            result = value.length ? value : @"-";
+        } else if ([value isKindOfClass:NSArray.class]) {
+            result = [(NSArray *)value componentsJoinedByString:@","];
+            if (!result.length) result = @"-";
+        } else {
+            result = [value description] ?: @"-";
+        }
+    }
+
+    CFRelease(task);
+    return result;
+}
+
+static NSDictionary *GSRuntimeEntitlementSnapshot(void) {
+    return @{
+        @"applicationIdentifier":
+            GSRuntimeEntitlementString(@"application-identifier"),
+        @"teamIdentifier":
+            GSRuntimeEntitlementString(@"com.apple.developer.team-identifier"),
+        @"keychainAccessGroups":
+            GSRuntimeEntitlementString(@"keychain-access-groups"),
+        @"getTaskAllow":
+            GSRuntimeEntitlementString(@"get-task-allow"),
+        @"apsEnvironment":
+            GSRuntimeEntitlementString(@"aps-environment")
+    };
+}
 static UILabel *GSLabel;
 static NSString *GSStatus = @"loading";
 
@@ -19,6 +63,8 @@ static void GSUpdate(void) {
         NSString *nativeState = GSNativeAccountDebugState() ?: @"?";
 
         NSDictionary *identity = GSSideloadIdentitySnapshot();
+        NSDictionary *runtimeEntitlements = GSRuntimeEntitlementSnapshot();
+        NSString *runtimeIdentityState = [NSString stringWithFormat:@"appId=%@ team=%@ keychain=%@ taskAllow=%@ aps=%@", runtimeEntitlements[@"applicationIdentifier"], runtimeEntitlements[@"teamIdentifier"], runtimeEntitlements[@"keychainAccessGroups"], runtimeEntitlements[@"getTaskAllow"], runtimeEntitlements[@"apsEnvironment"]];
                 NSDictionary *webAuth = GSWebAuthDiagnosticsSnapshot();
         NSString *webAuthState = [NSString stringWithFormat:@"created=%@ started=%@ completed=%@ success=%@ cancel=%@ create=%@ start=%@ completion=%@ error=%@/%@", webAuth[@"created"], webAuth[@"started"], webAuth[@"completed"], webAuth[@"succeeded"], webAuth[@"cancelled"], webAuth[@"createCount"], webAuth[@"startCount"], webAuth[@"completionCount"], webAuth[@"errorDomain"], webAuth[@"errorCode"]];
 NSDictionary *oauth = identity[@"oauth"];
@@ -34,7 +80,7 @@ NSDictionary *oauth = identity[@"oauth"];
              "identityUsed = cfg=%@ svc=%@\\n"
              "connection = %@\n"
              "native = %@"
-             "oauth = %@\nwebAuth = %@"
+             "oauth = %@\nwebAuth = %@\nruntimeIdentity = %@"
              "status = %@",
             bundle,
             exec,
@@ -46,7 +92,8 @@ NSDictionary *oauth = identity[@"oauth"];
             connectionState,
             nativeState,
             oauthState,
-            webAuthState,
+            webAuthState,
+            runtimeIdentityState,
             GSStatus ?: @"-"];
 
         GSLabel.text = text;
